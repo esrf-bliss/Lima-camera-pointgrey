@@ -24,11 +24,21 @@
 
 #include <stdlib.h>
 #include <limits>
+#include "HwBufferMgr.h"
 #include "HwMaxImageSizeCallback.h"
 
 #include "FlyCapture2.h"
-
 using namespace std;
+
+#ifdef USE_GIGE
+typedef FlyCapture2::GigECamera Camera_t;
+typedef FlyCapture2::GigEImageSettings ImageSettings_t;
+typedef FlyCapture2::GigEImageSettingsInfo ImageSettingsInfo_t;
+#else
+typedef FlyCapture2::Camera Camera_t;
+typedef FlyCapture2::Format7ImageSettings ImageSettings_t;
+typedef FlyCapture2::Format7Info ImageSettingsInfo_t;
+#endif
 
 namespace lima
 {
@@ -36,23 +46,21 @@ namespace PointGrey
 {
 /*******************************************************************
  * \class Camera
- * \brief object controlling the Point Grey camera via Pylon driver
+ * \brief object controlling the Point Grey camera via FlyCapture driver
  *******************************************************************/
-class VideoCtrlObj;
-class SyncCtrlObj;
 class Camera : public HwMaxImageSizeCallbackGen
 {
-    friend class SyncCtrlObj;
-
     DEB_CLASS_NAMESPC(DebModCamera, "Camera", "PointGrey");
-    friend class VideoCtrlObj;
- public:
 
+    friend class Interface;
+public:
     enum Status {
-      Ready, Exposure, Readout, Latency, Fault
+        Ready, Exposure, Readout, Latency, Fault
     };
 
-    Camera(const std::string& camera_ip, const int camera_serial_no = 0);
+    Camera(const int camera_serial,
+            const int packet_size = -1,
+            const int packet_delay = -1);
     ~Camera();
 
     // hw interface
@@ -61,27 +69,28 @@ class Camera : public HwMaxImageSizeCallbackGen
     void stopAcq();
 
     void getStatus(Camera::Status& status);
-    void reset(void);
-    
+
+    // buffer control object
+    HwBufferCtrlObj* getBufferCtrlObj();
+
     // detector info object
     void getDetectorType(std::string& type);
     void getDetectorModel(std::string& model);
     void getDetectorImageSize(Size& size);
 
+    void getImageType(ImageType& type);
+    void setImageType(ImageType type);
+
     // synch control object
     void getTrigMode(TrigMode& mode);
-    void setTrigMode(TrigMode  mode);
+    void setTrigMode(TrigMode mode);
 
     void getExpTime(double& exp_time);
-    void setExpTime(double  exp_time);
-    void getExpTimeRange(double& min_exp_time, double& max_exp_time) const;
-
-    void getLatTime(double& lat_time);
-    void setLatTime(double  lat_time);
-    void getLatTimeRange(double& min_lat_time, double& max_lat_time) const;
+    void setExpTime(double exp_time);
+    void getExpTimeRange(double& min_exp_time, double& max_exp_time);
 
     void getNbFrames(int& nb_frames);
-    void setNbFrames(int  nb_frames);
+    void setNbFrames(int nb_frames);
     void getNbHwAcquiredFrames(int &nb_acq_frames);
 
     // roi control object
@@ -94,57 +103,67 @@ class Camera : public HwMaxImageSizeCallbackGen
     void getBin(Bin& bin);
     void setBin(const Bin& bin);
 
-    // video control object
-    void getVideoMode(VideoMode& mode) const;
-    void setVideoMode(VideoMode  mode);
+    // camera specific
+    void getPacketSize(int& packet_size);
+    void setPacketSize(int packet_size);
+
+    void getPacketDelay(int& packet_delay);
+    void setPacketDelay(int packet_delay);
 
     void getGain(double& gain);
-    void setGain(double  gain);
+    void setGain(double gain);
+    void getGainRange(double& min_gain, double& max_gain);
 
-    // camera specific
-    void getAutoExpTime(bool& auto_frame_rate) const;
-    void setAutoExpTime(bool  auto_exp_time);
+    void getFrameRate(double& frame_rate);
+    void setFrameRate(double frame_rate);
+    void getFrameRateRange(double& min_frame_rate, double& max_frame_rate);
 
-    void getAutoGain(bool& auto_gain) const;
-    void setAutoGain(bool  auto_gain);
+    void getAutoExpTime(bool& auto_frame_rate);
+    void setAutoExpTime(bool auto_exp_time);
 
- protected:
-    void _getPropertyInfo(FlyCapture2::PropertyInfo *property_info);
-    void _getProperty(FlyCapture2::Property *property);
-    void _setProperty(FlyCapture2::Property *property);
+    void getAutoGain(bool& auto_gain);
+    void setAutoGain(bool auto_gain);
 
- private:
-    static void _newFrameCBK(FlyCapture2::Image* image, const void *data);
-    void _newFrame(FlyCapture2::Image *image);
+    void getAutoFrameRate(bool& auto_frame_rate);
+    void setAutoFrameRate(bool auto_frame_rate);
+protected:
+    // property management
+    void _getPropertyValue(FlyCapture2::PropertyType type, double& value);
+    void _setPropertyValue(FlyCapture2::PropertyType type, double value);
+    void _getPropertyRange(FlyCapture2::PropertyType type, double& min_value, double& max_value);
+    void _getPropertyAutoMode(FlyCapture2::PropertyType type, bool& auto_mode);
+    void _setPropertyAutoMode(FlyCapture2::PropertyType type, bool auto_mode);
 
-    SyncCtrlObj              *m_sync;
-    VideoCtrlObj             *m_video;
+    void _getImageSettingsInfo();
+    void _applyImageSettings();
+private:
+    class _AcqThread;
+    friend class _AcqThread;
 
-    Camera::Status            m_status;
-    int                       m_nb_frames;
-    int                       m_image_number;
-    bool                      m_continue_acq;
-    bool                      m_started;
+    void _setStatus(Camera::Status status, bool force);
+    void _stopAcq(bool internalFlag);
+    void _forcePGRY16Mode();
 
-    FlyCapture2::Camera      *m_camera;
-    FlyCapture2::CameraInfo   m_camera_info;
-    FlyCapture2::Error        m_error;
-    const FlyCapture2::Error  m_c_error;
+    SoftBufferCtrlObj m_buffer_ctrl_obj;
 
-    FlyCapture2::Format7Info  m_fmt7_info;
-    FlyCapture2::Format7ImageSettings m_fmt7_image_settings;
-    FlyCapture2::Format7PacketInfo m_fmt7_packet_info;
+    Camera::Status m_status;
+    int m_nb_frames;
+    int m_image_number;
 
-    FlyCapture2::Property     m_frame_rate_property,
-                              m_exp_time_property,
-                              m_gain_property;
-    
-    FlyCapture2::PropertyInfo m_frame_rate_property_info,
-                              m_exp_time_property_info,
-                              m_gain_property_info;
+    _AcqThread *m_acq_thread;
+    Cond m_cond;
+    volatile bool m_quit;
+    volatile bool m_acq_started;
+    volatile bool m_thread_running;
+
+    Camera_t *m_camera;
+    FlyCapture2::CameraInfo m_camera_info;
+    FlyCapture2::Error m_error;
+
+    ImageSettingsInfo_t m_image_settings_info;
+    ImageSettings_t m_image_settings;
 };
 } // namespace PointGrey
 } // namespace lima
-
 
 #endif // POINTGREYCAMERA_H

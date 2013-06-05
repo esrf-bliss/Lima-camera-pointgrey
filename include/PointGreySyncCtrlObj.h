@@ -19,49 +19,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //###########################################################################
-#ifndef POINTGREYINTERFACE_H
-#define POINTGREYINTERFACE_H
+#ifndef POINTGREYSYNCCTRLOBJ_H
+#define POINTGREYSYNCCTRLOBJ_H
 
-#include "HwInterface.h"
+#include "HwSyncCtrlObj.h"
 
 namespace lima
 {
 namespace PointGrey
 {
 class Camera;
-class DetInfoCtrlObj;
-class SyncCtrlObj;
 
 /*******************************************************************
- * \class Interface
- * \brief PointGrey hardware interface
+ * \class SyncCtrlObj
+ * \brief Control object providing PointGrey synchronization interface
  *******************************************************************/
-class Interface : public HwInterface
+class SyncCtrlObj : public HwSyncCtrlObj
 {
-    DEB_CLASS_NAMESPC(DebModCamera, "PointGreyInterface", "PointGrey");
+    DEB_CLASS_NAMESPC(DebModCamera, "SyncCtrlObj", "PointGrey");
 
 public:
-    Interface(Camera& cam);
-    virtual ~Interface();
+    SyncCtrlObj(Camera& cam);
 
-    //- From HwInterface
-    virtual void getCapList(CapList&) const;
-    virtual void reset(ResetLevel reset_level);
-    virtual void prepareAcq();
-    virtual void startAcq();
-    virtual void stopAcq();
-    virtual void getStatus(StatusType& status);
-    virtual int getNbHwAcquiredFrames();
+    virtual ~SyncCtrlObj() {};
 
-    Camera& getCamera() { return m_cam; }
+    virtual bool checkTrigMode(TrigMode trig_mode);
+    virtual void setTrigMode(TrigMode trig_mode);
+    virtual void getTrigMode(TrigMode& trig_mode);
+
+    virtual void setExpTime(double exp_time);
+    virtual void getExpTime(double& exp_time);
+
+    virtual void setLatTime(double lat_time);
+    virtual void getLatTime(double& lat_time);
+
+    virtual void setNbHwFrames(int nb_frames);
+    virtual void getNbHwFrames(int& nb_frames);
+
+    virtual void getValidRanges(ValidRangesType& valid_ranges);
 
 private:
+    void _adjustFrameRate();
+
     Camera& m_cam;
-    CapList m_cap_list;
-    DetInfoCtrlObj *m_det_info;
-    SyncCtrlObj *m_sync;
+    double m_exp_time;
+    double m_lat_time;
+    double m_max_acq_period;
+    ValidRangesType m_valid_ranges;
 };
 } // namespace PointGrey
 } // namespace lima
 
-#endif // POINTGREYINTERFACE_H
+#endif // POINTGREYSYNCCTRLOBJ_H
