@@ -36,7 +36,6 @@ SyncCtrlObj::SyncCtrlObj(Camera& cam)
     double exp_time_ms, min_exp_time_ms, max_exp_time_ms;
     double min_frame_rate, max_frame_rate;
 
-    m_cam.setAutoFrameRate(true);
     m_cam.getExpTime(exp_time_ms);
     m_cam.getExpTimeRange(min_exp_time_ms, max_exp_time_ms);
     m_cam.getFrameRateRange(min_frame_rate, max_frame_rate);
@@ -90,7 +89,6 @@ void SyncCtrlObj::setExpTime(double exp_time)
     DEB_MEMBER_FUNCT();
     DEB_PARAM() << DEB_VAR1(exp_time);
     m_exp_time = exp_time;
-    _adjustFrameRate();
     m_cam.setExpTime(exp_time * 1E3);
 
     m_valid_ranges.max_lat_time = m_max_acq_period - m_exp_time;
@@ -103,7 +101,8 @@ void SyncCtrlObj::setExpTime(double exp_time)
 void SyncCtrlObj::getExpTime(double& exp_time)
 {
     DEB_MEMBER_FUNCT();
-    exp_time = m_exp_time;
+    m_cam.getExpTime(exp_time);
+    exp_time /= 1000;
     DEB_RETURN() << DEB_VAR1(exp_time);
 }
 
@@ -115,7 +114,6 @@ void SyncCtrlObj::setLatTime(double lat_time)
     DEB_MEMBER_FUNCT();
     DEB_PARAM() << DEB_VAR1(lat_time);
     m_lat_time = lat_time;    
-    _adjustFrameRate();
 
     m_valid_ranges.max_exp_time = m_max_acq_period - m_lat_time;
     validRangesChanged(m_valid_ranges);

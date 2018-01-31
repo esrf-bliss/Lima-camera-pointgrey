@@ -1,4 +1,4 @@
 src-dirs  = src
-test-dirs = 
+test-dirs = test
 
 include ../../global.inc

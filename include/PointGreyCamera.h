@@ -24,11 +24,11 @@
 
 #include <stdlib.h>
 #include <limits>
+#include <string>
 #include "lima/HwBufferMgr.h"
 #include "lima/HwMaxImageSizeCallback.h"
 
 #include "FlyCapture2.h"
-using namespace std;
 
 #ifdef USE_GIGE
 typedef FlyCapture2::GigECamera Camera_t;
@@ -58,9 +58,17 @@ public:
         Ready, Exposure, Readout, Latency, Fault
     };
 
-    Camera(const int camera_serial,
-            const int packet_size = -1,
-            const int packet_delay = -1);
+    enum ExtendedShutterType
+    {
+      NO_EXTENDED_SHUTTER,
+      DRAGONFLY_EXTENDED_SHUTTER,
+      GENERAL_EXTENDED_SHUTTER
+    };
+
+    Camera(std::string& camera_ip, const int packet_size = -1, const int packet_delay = -1);
+
+    Camera(const int camera_serial, const int packet_size = -1, const int packet_delay = -1);
+
     ~Camera();
 
     // hw interface
@@ -97,13 +105,16 @@ public:
     void checkRoi(const Roi& set_roi, Roi& hw_roi);
     void getRoi(Roi& hw_roi);
     void setRoi(const Roi& set_roi);
+    bool isRoiAvailable() const;
 
     // bin control object
     void checkBin(Bin&);
     void getBin(Bin& bin);
     void setBin(const Bin& bin);
+    bool isBinningAvailable() const;
 
     // camera specific
+    void initialise(int packet_size, int packet_delay);
     void getPacketSize(int& packet_size);
     void setPacketSize(int packet_size);
 
@@ -126,14 +137,22 @@ public:
 
     void getAutoFrameRate(bool& auto_frame_rate);
     void setAutoFrameRate(bool auto_frame_rate);
+
+    void getFrameRateOnOff(bool& onOff);
+    void setFrameRateOnOff(bool onOff);
+
 protected:
     // property management
     void _getPropertyValue(FlyCapture2::PropertyType type, double& value);
     void _setPropertyValue(FlyCapture2::PropertyType type, double value);
     void _getPropertyRange(FlyCapture2::PropertyType type, double& min_value, double& max_value);
-    void _getPropertyAutoMode(FlyCapture2::PropertyType type, bool& auto_mode);
-    void _setPropertyAutoMode(FlyCapture2::PropertyType type, bool auto_mode);
+    void _getPropertyAutoMode(FlyCapture2::PropertyType type, bool& autoManualMode);
+    void _setPropertyAutoMode(FlyCapture2::PropertyType type, bool autoManualMode);
+    void _getPropertyOnOff(FlyCapture2::PropertyType type, bool& onOff);
+    void _setPropertyOnOff(FlyCapture2::PropertyType type, bool onOff);
 
+    void _getImageBinningSettings();
+    void _setImageBinningSettings();
     void _getImageSettingsInfo();
     void _applyImageSettings();
 private:
@@ -162,6 +181,9 @@ private:
 
     ImageSettingsInfo_t m_image_settings_info;
     ImageSettings_t m_image_settings;
+    unsigned int m_horizBinningValue;
+    unsigned int m_vertBinningValue;
+    bool m_fmt7_supported;
 };
 } // namespace PointGrey
 } // namespace lima

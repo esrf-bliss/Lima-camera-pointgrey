@@ -9,16 +9,17 @@ PointGrey
 
 Intoduction
 ```````````
-Point Grey is a world-leading designer and manufacturer of innovative, high-performance digital cameras for industrial, life science, and traffic applications. We offer a unique and comprehensive portfolio of USB 3.0, GigE, FireWire, USB 2.0 and Camera Link products known for their outstanding quality, ease of use, and unbeatable price-performance. 
+PointGrey is a world-leading designer and manufacturer of innovative, high-performance digital cameras for industrial, life science, and traffic applications. We offer a unique and comprehensive portfolio of USB 3.0, GigE, FireWire, USB 2.0 and Camera Link products known for their outstanding quality, ease of use, and unbeatable price-performance. 
 
 The Lima module as been tested only with this GigE cameras models:
   - Blackfly 1024x768 (model BFLY-PGE-05S2M)
+    and (BFLY-PGE-31S4M-C)
 
 
 Prerequisite
 ````````````
 Previously to this you have to install the PointGrey *FlyCapture* SDK. We only tested it on debian6 and using 
-the SDK version 2.3.19 (the latest one compatible with debian6 libc).
+the SDK version 2.3.19 (the latest one compatible with debian6 libc). Now tested with Debian 7
 
 PointGrey python module need at least the lima core module.
 

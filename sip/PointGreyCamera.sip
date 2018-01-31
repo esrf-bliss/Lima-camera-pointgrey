@@ -10,9 +10,10 @@ namespace PointGrey
   public:
 
     enum Status {
-      Ready, Exposure, Readout, Latency,
+      Ready, Exposure, Readout, Latency, Fault
     };
 
+    Camera(std::string& camera_ip, const int packet_size = -1, const int packet_delay = -1);
     Camera(const int camera_serial, const int packet_size = -1, const int packet_delay = -1);
     ~Camera();
 
@@ -42,11 +43,13 @@ namespace PointGrey
     void checkRoi(const Roi& set_roi, Roi& hw_roi /Out/);
     void getRoi(Roi& hw_roi /Out/); 
     void setRoi(const Roi& set_roi);
+    bool isRoiAvailable() const;
 
     // -- bin
     void checkBin(Bin& /In,Out/);
     void getBin(Bin& /Out/);
     void setBin(const Bin&);
+    bool isBinningAvailable() const;
 
     // -- camera specific
     // packet size control
@@ -74,5 +77,7 @@ namespace PointGrey
     void getAutoFrameRate(bool& auto_frame_rate /Out/);
     void setAutoFrameRate(bool auto_frame_rate);
     void getFrameRateRange(double& min_frame_rate /Out/, double& max_frame_rate /Out/);
+    void getFrameRateOnOff(bool& onOff /Out/);
+    void setFrameRateOnOff(bool onOff);
   };
 };

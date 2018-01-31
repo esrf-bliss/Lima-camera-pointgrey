@@ -24,6 +24,8 @@
 #include "PointGreyCamera.h"
 #include "PointGreyDetInfoCtrlObj.h"
 #include "PointGreySyncCtrlObj.h"
+#include "PointGreyRoiCtrlObj.h"
+#include "PointGreyBinCtrlObj.h"
 
 using namespace lima;
 using namespace lima::PointGrey;
@@ -38,6 +40,8 @@ Interface::Interface(Camera& cam)
     DEB_CONSTRUCTOR();
     m_det_info = new DetInfoCtrlObj(cam);
     m_sync = new SyncCtrlObj(cam);
+    m_roi = new RoiCtrlObj(cam);
+    m_bin = new BinCtrlObj(cam);
 
     m_cap_list.push_back(HwCap(m_det_info));
     m_cap_list.push_back(HwCap(m_sync));
@@ -55,6 +59,8 @@ Interface::~Interface()
     DEB_DESTRUCTOR();
     delete m_det_info;
     delete m_sync;
+    delete m_roi;
+    delete m_bin;
 }
 
 //-----------------------------------------------------
@@ -64,6 +70,13 @@ void Interface::getCapList(HwInterface::CapList &cap_list) const
 {
     DEB_MEMBER_FUNCT();
     cap_list = m_cap_list;
+
+    if (m_cam.isRoiAvailable()){
+      cap_list.push_back(HwCap(m_roi));
+    }
+    if (m_cam.isBinningAvailable()) {
+         cap_list.push_back(HwCap(m_bin));
+    }
 }
 
 //-----------------------------------------------------

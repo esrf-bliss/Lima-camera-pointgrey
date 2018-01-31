@@ -1,12 +1,14 @@
 pointgrey-objs = PointGreyCamera.o \
 	PointGreyInterface.o \
 	PointGreyDetInfoCtrlObj.o \
-	PointGreySyncCtrlObj.o
+	PointGreySyncCtrlObj.o \
+	PointGreyRoiCtrlObj.o \
+	PointGreyBinCtrlObj.o
 
 SRCS = $(pointgrey-objs:.o=.cpp) 
 
 CXXFLAGS += -I../include -I../../../hardware/include -I../../../common/include \
-			-I/usr/include/flycapture \
+			-I../sdk/usr/include/flycapture \
 			-fPIC -g -DUSE_GIGE
 
 all:	PointGrey.o

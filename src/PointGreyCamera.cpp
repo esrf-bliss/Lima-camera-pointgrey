@@ -1,3 +1,13 @@
+#include <iostream>
+#include <netdb.h>
+#include <sys/param.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fstream>
+#include <time.h>
+#include <sstream>
+
+#include <FlyCapture2Defs.h>
 #include "PointGreyCamera.h"
 
 using namespace lima;
@@ -22,9 +32,7 @@ private:
 //-----------------------------------------------------
 //
 //-----------------------------------------------------
-Camera::Camera(const int camera_serial,
-               const int packet_size,
-               const int packet_delay)
+Camera::Camera(std::string& camera_ip, const int packet_size, const int packet_delay)
     : m_nb_frames(1)
     , m_status(Ready)
     , m_quit(false)
@@ -34,6 +42,65 @@ Camera::Camera(const int camera_serial,
     , m_camera(NULL)
 {
     DEB_CONSTRUCTOR();
+
+    //DebParams::setModuleFlags(DebParams::AllFlags);
+    //DebParams::setTypeFlags(DebParams::AllFlags);
+    //DebParams::setFormatFlags(DebParams::AllFlags);
+
+    FlyCapture2::BusManager busmgr;
+    FlyCapture2::PGRGuid pgrguid;
+
+    unsigned int nb_cameras;
+    m_camera = new Camera_t();
+
+    m_error = busmgr.GetNumOfCameras(&nb_cameras);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to create bus manager: " << m_error.GetDescription();
+
+    if (nb_cameras < 1)
+        THROW_HW_ERROR(Error) << "No cameras found";
+
+    hostent * record = gethostbyname(camera_ip.c_str());
+    if(record == NULL)
+        THROW_HW_ERROR(Error) << "Camera address not found";
+
+    in_addr *address = (in_addr*)record->h_addr;
+    DEB_TRACE() << "Found IP address " << inet_ntoa(*address);
+    int num_address = address->s_addr;
+    FlyCapture2::IPAddress ipAddress = htonl(address->s_addr);
+
+    m_error = busmgr.GetCameraFromIPAddress(ipAddress, &pgrguid);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Camera not found on IPaddress: " << m_error.GetDescription();
+
+    FlyCapture2::InterfaceType interfaceType;
+    m_error = busmgr.GetInterfaceTypeFromGuid( &pgrguid, &interfaceType );
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Error getting interface type: " << m_error.GetDescription();
+
+    DEB_TRACE() << DEB_VAR1(interfaceType);
+
+    m_error = m_camera->Connect(&pgrguid);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to connect to camera: " << m_error.GetDescription();
+
+    initialise(packet_size, packet_delay);
+}
+
+Camera::Camera(const int camera_serial, const int packet_size, const int packet_delay)
+    : m_nb_frames(1)
+    , m_status(Ready)
+    , m_quit(false)
+    , m_acq_started(false)
+    , m_thread_running(true)
+    , m_image_number(0)
+    , m_camera(NULL)
+{
+    DEB_CONSTRUCTOR();
+
+    //    DebParams::setModuleFlags(DebParams::AllFlags);
+    //    DebParams::setTypeFlags(DebParams::AllFlags);
+    //    DebParams::setFormatFlags(DebParams::AllFlags);
 
     FlyCapture2::BusManager busmgr;
     FlyCapture2::PGRGuid pgrguid;
@@ -52,10 +119,23 @@ Camera::Camera(const int camera_serial,
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Camera not found: " << m_error.GetDescription();
 
+    FlyCapture2::InterfaceType interfaceType;
+    m_error = busmgr.GetInterfaceTypeFromGuid(&pgrguid, &interfaceType);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Error getting interface type: " << m_error.GetDescription();
+
+    DEB_TRACE() << DEB_VAR1(interfaceType);
+
     m_error = m_camera->Connect(&pgrguid);
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Failed to connect to camera: " << m_error.GetDescription();
 
+    initialise(packet_size, packet_delay);
+}
+
+void Camera::initialise(int packet_size, int packet_delay)
+{
+    DEB_MEMBER_FUNCT();
     m_error = m_camera->GetCameraInfo(&m_camera_info);
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Failed to get camera info: " << m_error.GetDescription();
@@ -66,7 +146,17 @@ Camera::Camera(const int camera_serial,
     if (packet_delay > 0)
         setPacketDelay(packet_delay);
 
+    _getImageBinningSettings();
+    DEB_TRACE() << DEB_VAR2(m_horizBinningValue, m_vertBinningValue);
+    m_horizBinningValue = 1;
+    m_vertBinningValue = 1;
+    _setImageBinningSettings();
+    DEB_TRACE() << DEB_VAR2(m_horizBinningValue, m_vertBinningValue);
+
     _getImageSettingsInfo();
+    DEB_TRACE() << DEB_VAR2(m_image_settings_info.maxWidth, m_image_settings_info.maxHeight);
+    DEB_TRACE() << DEB_VAR2(m_image_settings_info.offsetHStepSize, m_image_settings_info.offsetVStepSize);
+    DEB_TRACE() << DEB_VAR2(m_image_settings_info.imageHStepSize, m_image_settings_info.imageVStepSize);
 
     // Setup default image format
     m_image_settings.offsetX = 0;
@@ -88,6 +178,7 @@ Camera::Camera(const int camera_serial,
 Camera::~Camera()
 {
     DEB_DESTRUCTOR();
+    stopAcq();
     delete m_acq_thread;
     m_camera->Disconnect();
     delete m_camera;
@@ -99,6 +190,7 @@ Camera::~Camera()
 void Camera::_getImageSettingsInfo()
 {
     DEB_MEMBER_FUNCT();
+
 #ifdef USE_GIGE
     m_error = m_camera->GetGigEImageSettingsInfo(&m_image_settings_info);
 #else
@@ -115,10 +207,47 @@ void Camera::_getImageSettingsInfo()
 //-----------------------------------------------------
 //
 //-----------------------------------------------------
-void Camera::_applyImageSettings()
+void Camera:: _getImageBinningSettings()
 {
     DEB_MEMBER_FUNCT();
 #ifdef USE_GIGE
+    m_error = m_camera->GetGigEImageBinningSettings(&m_horizBinningValue, &m_vertBinningValue);
+#else
+    THROW_HW_ERROR(Error) << "Format7 is not implemented";
+#endif
+
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to get image binning settings: " << m_error.GetDescription();
+}
+
+//-----------------------------------------------------
+//
+//-----------------------------------------------------
+void Camera:: _setImageBinningSettings()
+{
+    DEB_MEMBER_FUNCT();
+#ifdef USE_GIGE
+    m_error = m_camera->SetGigEImageBinningSettings(m_horizBinningValue, m_vertBinningValue);
+#else
+    THROW_HW_ERROR(Error) << "Format7 is not implemented";
+#endif
+
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to set image binning settings: " << m_error.GetDescription();
+}
+
+//-----------------------------------------------------
+//
+//-----------------------------------------------------
+void Camera::_applyImageSettings()
+{
+    DEB_MEMBER_FUNCT();
+
+#ifdef USE_GIGE
+      DEB_TRACE() << "apply image setting " << m_image_settings.offsetX << " " <<
+      m_image_settings.offsetY << " " << 
+      m_image_settings.width << " " <<
+      m_image_settings.height;
     m_error = m_camera->SetGigEImageSettings(&m_image_settings);
 #else
     bool valid;
@@ -231,14 +360,15 @@ void Camera::startAcq()
 {
     DEB_MEMBER_FUNCT();
 
-    DEB_TRACE() << "Start acquisition";
-
     StdBufferCbMgr& buffer_mgr = m_buffer_ctrl_obj.getBuffer();
     buffer_mgr.setStartTimestamp(Timestamp::now());
 
     m_error = m_camera->StartCapture();
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Unable to start image capture: " << m_error.GetDescription();
+
+    _getImageSettingsInfo();
+    _getImageBinningSettings();
 
     // Start acquisition thread
     AutoMutex lock(m_cond.mutex());
@@ -369,8 +499,6 @@ void Camera::getTrigMode(TrigMode& mode)
 {
     DEB_MEMBER_FUNCT();
 
-    cout << "getTrigMode" << endl;
-
     // Get current trigger settings
     FlyCapture2::TriggerMode triggerMode;
     m_error = m_camera->GetTriggerMode(&triggerMode);
@@ -482,6 +610,13 @@ void Camera::checkRoi(const Roi& set_roi, Roi& hw_roi)
 {
     DEB_MEMBER_FUNCT();
     DEB_PARAM() << DEB_VAR1(set_roi);
+    Roi max_roi = Roi(0, 0, int(m_image_settings_info.maxWidth), int(m_image_settings_info.maxHeight));
+	if (set_roi.isActive() && set_roi != max_roi) {
+		// a real roi requested
+		hw_roi = set_roi;
+	} else {
+		hw_roi = max_roi;
+    }
     DEB_RETURN() << DEB_VAR1(hw_roi);
 }
 
@@ -491,6 +626,14 @@ void Camera::checkRoi(const Roi& set_roi, Roi& hw_roi)
 void Camera::getRoi(Roi& hw_roi)
 {
     DEB_MEMBER_FUNCT();
+    _getImageSettingsInfo();
+
+    int x = m_image_settings.offsetX; 
+    int y = m_image_settings.offsetY;
+    int width = m_image_settings.width;
+    int height = m_image_settings.height;
+    hw_roi = Roi(x, y, width,height);
+    DEB_TRACE() << "getRoi " << DEB_VAR4(x, y, width, height);
     DEB_RETURN() << DEB_VAR1(hw_roi);
 }
 
@@ -501,6 +644,33 @@ void Camera::setRoi(const Roi& ask_roi)
 {
     DEB_MEMBER_FUNCT();
     DEB_PARAM() << DEB_VAR1(ask_roi);
+    ImageType type;
+    ImageSettings_t old_image_settings = m_image_settings;
+    Point topLeft = ask_roi.getTopLeft();
+    Size size = ask_roi.getSize();
+
+    DEB_TRACE() << "setRoi " << DEB_VAR4(topLeft.x, topLeft.y, size.getWidth(), size.getHeight());
+
+    m_image_settings.offsetX = topLeft.x;
+    m_image_settings.offsetY = topLeft.y;
+    m_image_settings.width = size.getWidth();
+    m_image_settings.height = size.getHeight();
+    try
+    {
+        _applyImageSettings();
+    _getImageSettingsInfo();
+    DEB_TRACE() << DEB_VAR2(m_image_settings_info.maxWidth, m_image_settings_info.maxHeight);
+    DEB_TRACE() << DEB_VAR2(m_image_settings_info.offsetHStepSize, m_image_settings_info.offsetVStepSize);
+    DEB_TRACE() << DEB_VAR2(m_image_settings_info.imageHStepSize, m_image_settings_info.imageVStepSize);
+
+    _getImageBinningSettings();
+    DEB_TRACE() << DEB_VAR2(m_horizBinningValue, m_vertBinningValue);
+    }
+    catch (Exception &e)
+    {
+	m_image_settings = old_image_settings;
+        THROW_HW_ERROR(Error) << e.getErrDesc();
+    }
 }
 
 //-----------------------------------------------------
@@ -518,6 +688,8 @@ void Camera::checkBin(Bin &aBin)
 void Camera::getBin(Bin &aBin)
 {
     DEB_MEMBER_FUNCT();
+    _getImageBinningSettings();
+    aBin = Bin(m_horizBinningValue, m_vertBinningValue);
     DEB_RETURN() << DEB_VAR1(aBin);
 }
 
@@ -527,7 +699,25 @@ void Camera::getBin(Bin &aBin)
 void Camera::setBin(const Bin &aBin)
 {
     DEB_MEMBER_FUNCT();
-    DEB_RETURN() << DEB_VAR1(aBin);
+    DEB_TRACE() << DEB_VAR1(aBin);
+    m_horizBinningValue = aBin.getX();
+    m_vertBinningValue = aBin.getY();
+    _setImageBinningSettings();
+    _getImageSettingsInfo();
+}
+
+bool Camera::isBinningAvailable() const
+{
+    DEB_MEMBER_FUNCT();
+    bool isAvailable = true;
+    return isAvailable;
+}
+
+bool Camera::isRoiAvailable() const
+{
+    DEB_MEMBER_FUNCT();
+    bool isAvailable = true;
+    return isAvailable;
 }
 
 //-----------------------------------------------------
@@ -536,7 +726,12 @@ void Camera::setBin(const Bin &aBin)
 void Camera::getExpTime(double& exp_time)
 {
     DEB_MEMBER_FUNCT();
-    _getPropertyValue(FlyCapture2::SHUTTER, exp_time);
+    try {
+	_getPropertyValue(FlyCapture2::SHUTTER, exp_time);
+    } 
+    catch (Exception& e) {
+	DEB_TRACE() << "Shutter time not available";
+    }
     DEB_RETURN() << DEB_VAR1(exp_time);
 }
 
@@ -546,6 +741,7 @@ void Camera::getExpTime(double& exp_time)
 void Camera::setExpTime(double exp_time)
 {
     DEB_MEMBER_FUNCT();
+    DEB_TRACE() << "setting exposure time to " << exp_time;
     DEB_PARAM() << DEB_VAR1(exp_time);
     _setPropertyValue(FlyCapture2::SHUTTER, exp_time);
 }
@@ -681,6 +877,26 @@ void Camera::setAutoFrameRate(bool auto_frame_rate)
 }
 
 //-----------------------------------------------------
+//
+//-----------------------------------------------------
+void Camera::getFrameRateOnOff(bool& onOff)
+{
+    DEB_MEMBER_FUNCT();
+    _getPropertyOnOff(FlyCapture2::FRAME_RATE, onOff);
+    DEB_RETURN() << DEB_VAR1(onOff);
+}
+
+//-----------------------------------------------------
+//
+//-----------------------------------------------------
+void Camera::setFrameRateOnOff(bool onOff)
+{
+    DEB_MEMBER_FUNCT();
+    DEB_PARAM() << DEB_VAR1(onOff);
+    _setPropertyOnOff(FlyCapture2::FRAME_RATE, onOff);
+}
+
+//-----------------------------------------------------
 // property management
 //-----------------------------------------------------
 void Camera::_getPropertyValue(FlyCapture2::PropertyType type, double& value)
@@ -703,11 +919,11 @@ void Camera::_setPropertyValue(FlyCapture2::PropertyType type, double value)
     DEB_MEMBER_FUNCT();
     FlyCapture2::Property property(type);
 
-    property.onOff = true;
-    property.autoManualMode = false;
-    property.absControl = true;
-    property.absValue = value;
+    m_error = m_camera->GetProperty(&property);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to get camera property: " << m_error.GetDescription();
 
+    property.absValue = value;
     m_error = m_camera->SetProperty(&property);
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Failed to set camera property: " << m_error.GetDescription();
@@ -732,7 +948,21 @@ void Camera::_getPropertyRange(FlyCapture2::PropertyType type, double& min_value
 //-----------------------------------------------------
 //
 //-----------------------------------------------------
-void Camera::_getPropertyAutoMode(FlyCapture2::PropertyType type, bool& auto_mode)
+void Camera::_getPropertyAutoMode(FlyCapture2::PropertyType type, bool& autoManualMode)
+{
+    DEB_MEMBER_FUNCT();
+    FlyCapture2::Property property(type);
+    m_error = m_camera->GetProperty(&property);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to get camera property: " << m_error.GetDescription();
+
+    autoManualMode = property.autoManualMode;
+}
+
+//-----------------------------------------------------
+//
+//-----------------------------------------------------
+void Camera::_setPropertyAutoMode(FlyCapture2::PropertyType type, bool autoManualMode)
 {
     DEB_MEMBER_FUNCT();
     FlyCapture2::Property property(type);
@@ -741,20 +971,39 @@ void Camera::_getPropertyAutoMode(FlyCapture2::PropertyType type, bool& auto_mod
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Failed to get camera property: " << m_error.GetDescription();
 
-    auto_mode = property.autoManualMode;
+    property.autoManualMode = autoManualMode;
+    m_error = m_camera->SetProperty(&property);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to set camera property: " << m_error.GetDescription();
 }
 
 //-----------------------------------------------------
 //
 //-----------------------------------------------------
-void Camera::_setPropertyAutoMode(FlyCapture2::PropertyType type, bool auto_mode)
+void Camera::_getPropertyOnOff(FlyCapture2::PropertyType type, bool& onOff)
+{
+    DEB_MEMBER_FUNCT();
+    FlyCapture2::Property property(type);
+    m_error = m_camera->GetProperty(&property);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to get camera property: " << m_error.GetDescription();
+
+    onOff = property.onOff;
+}
+
+//-----------------------------------------------------
+//
+//-----------------------------------------------------
+void Camera::_setPropertyOnOff(FlyCapture2::PropertyType type, bool onOff)
 {
     DEB_MEMBER_FUNCT();
     FlyCapture2::Property property(type);
 
-    property.onOff = not auto_mode;
-    property.autoManualMode = auto_mode;
+    m_error = m_camera->GetProperty(&property);
+    if (m_error != FlyCapture2::PGRERROR_OK)
+        THROW_HW_ERROR(Error) << "Failed to get camera property: " << m_error.GetDescription();
 
+    property.onOff = onOff;
     m_error = m_camera->SetProperty(&property);
     if (m_error != FlyCapture2::PGRERROR_OK)
         THROW_HW_ERROR(Error) << "Failed to set camera property: " << m_error.GetDescription();
@@ -800,11 +1049,13 @@ Camera::_AcqThread::_AcqThread(Camera &cam) : m_cam(cam)
 
 Camera::_AcqThread::~_AcqThread()
 {
+    DEB_DESTRUCTOR();
     AutoMutex lock(m_cam.m_cond.mutex());
     m_cam.m_quit = true;
     m_cam.m_cond.broadcast();
     lock.unlock();
 
+    DEB_TRACE() << "Waiting for the acquisition thread to be done (joining the main thread).";
     join();
 }
 
@@ -818,7 +1069,7 @@ void Camera::_AcqThread::threadFunction()
     param.sched_priority = sched_get_priority_max(SCHED_FIFO);
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param))
     {
-        DEB_ERROR() << "Could not set FIFO scheduling for acquisition thread";
+        DEB_TRACE() << "Could not set FIFO scheduling for acquisition thread";
     }
 
     AutoMutex lock(m_cam.m_cond.mutex());
@@ -869,7 +1120,7 @@ void Camera::_AcqThread::threadFunction()
             }
             else if (error == FlyCapture2::PGRERROR_IMAGE_CONSISTENCY_ERROR)
             {
-                DEB_WARNING() << "No image acquired: " << error.GetDescription();
+		//                DEB_WARNING() << "No image acquired: " << error.GetDescription();
             }
             else
             {
