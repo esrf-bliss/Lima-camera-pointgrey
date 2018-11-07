@@ -24,10 +24,12 @@
 
 #include <stdlib.h>
 #include <limits>
+
+#include <flycapture/FlyCapture2.h>
+
 #include "lima/HwBufferMgr.h"
 #include "lima/HwMaxImageSizeCallback.h"
 
-#include "FlyCapture2.h"
 using namespace std;
 
 #ifdef USE_GIGE
