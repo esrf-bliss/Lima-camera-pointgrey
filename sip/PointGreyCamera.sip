@@ -74,5 +74,8 @@ namespace PointGrey
     void getAutoFrameRate(bool& auto_frame_rate /Out/);
     void setAutoFrameRate(bool auto_frame_rate);
     void getFrameRateRange(double& min_frame_rate /Out/, double& max_frame_rate /Out/);
+    
+  private:
+    Camera(const PointGrey::Camera&);
   };
 };
